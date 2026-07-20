@@ -6,13 +6,44 @@ from uuid import uuid4
 from app.domain.models import AnalysisResult, IndicatorPoint
 from app.engine.defaults import DEFAULT_PARAMETERS, STRATEGY_VERSION
 from app.repositories import AnalysisRepository
+from app.services.llm import Explanation, ExplanationService
 from app.services.market_data import MarketDataService
 
 
+def apply_explanation(candidate, explanation: Explanation):
+    """Attach text only; immutable engine-generated price fields remain untouched."""
+    return candidate.model_copy(
+        update={"reason": explanation.reason, "risks": explanation.risks, "triggers": explanation.triggers}
+    )
+
+
 class AnalysisService:
-    def __init__(self, market_data: MarketDataService, analyses: AnalysisRepository) -> None:
+    def __init__(
+        self,
+        market_data: MarketDataService,
+        analyses: AnalysisRepository,
+        explanations: ExplanationService | None = None,
+    ) -> None:
         self.market_data = market_data
         self.analyses = analyses
+        self.explanations = explanations or ExplanationService()
+
+    def _explain(self, candidates: list) -> list:
+        explained = []
+        for candidate in candidates:
+            if candidate.entry is None or candidate.target_one is None or candidate.target_two is None or candidate.invalidation is None:
+                explained.append(candidate)
+                continue
+            prices = {candidate.entry.center, candidate.target_one.center, candidate.target_two.center, candidate.invalidation}
+            try:
+                response = self.explanations.explain(
+                    {"template": candidate.template, "direction": candidate.direction, "conditions": candidate.conditions, "facts": candidate.facts},
+                    prices,
+                )
+                explained.append(apply_explanation(candidate, response) if response else candidate)
+            except Exception:
+                explained.append(candidate)
+        return explained
 
     def analyze(self, symbol: str) -> AnalysisResult:
         import pandas as pd
@@ -50,6 +81,7 @@ class AnalysisService:
                     pivots, float(latest["atr_14"]), float(latest["Close"]), market.bars[-1].date
                 )
             candidates = generate_candidates(frame, zones)
+            candidates = self._explain(candidates)
         result = AnalysisResult(
             id=str(uuid4()),
             symbol=market.symbol,
