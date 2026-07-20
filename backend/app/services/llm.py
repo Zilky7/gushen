@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class LlmSafetyError(ValueError):
@@ -26,6 +31,9 @@ def validate_explanation(payload: dict[str, Any], allowed_prices: set[float]) ->
     for name in ("risks", "triggers"):
         if not isinstance(payload.get(name, []), list) or not all(isinstance(item, str) for item in payload.get(name, [])):
             raise LlmSafetyError(f"LLM {name} must be a list of text")
+    prose = [payload["reason"], *payload.get("risks", []), *payload.get("triggers", [])]
+    if any(re.search(r"(?<![A-Za-z])\d+(?:\.\d+)?", item) for item in prose):
+        raise LlmSafetyError("LLM response contains an untraceable numeric value in text")
     return Explanation(payload["reason"], payload.get("risks", []), payload.get("triggers", []), prices)
 
 
@@ -33,16 +41,28 @@ class ExplanationService:
     """Optional OpenAI-compatible explanation adapter; no price field is accepted as authority."""
 
     def enabled(self) -> bool:
-        return bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL"))
+        return bool(self._api_key() and self._model())
+
+    @staticmethod
+    def _api_key() -> str | None:
+        return os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+
+    @staticmethod
+    def _model() -> str | None:
+        return os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL")
+
+    @staticmethod
+    def _base_url() -> str | None:
+        return os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL")
 
     def explain(self, facts: dict[str, Any], allowed_prices: set[float]) -> Explanation | None:
         if not self.enabled():
             return None
         from openai import OpenAI
 
-        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=os.getenv("OPENAI_BASE_URL"))
+        client = OpenAI(api_key=self._api_key(), base_url=self._base_url())
         completion = client.chat.completions.create(
-            model=os.environ["OPENAI_MODEL"],
+            model=self._model(),
             temperature=0,
             response_format={"type": "json_object"},
             messages=[

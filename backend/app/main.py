@@ -9,6 +9,7 @@ from app.db import Database
 from app.repositories import AnalysisRepository, MarketCacheRepository
 from app.services.analysis import AnalysisService
 from app.services.market_data import MarketDataError, MarketDataService
+from app.services.research import ResearchService
 
 
 def create_app(database_path: str | Path = "data/gushen.sqlite3") -> FastAPI:
@@ -18,6 +19,7 @@ def create_app(database_path: str | Path = "data/gushen.sqlite3") -> FastAPI:
     app.state.analysis_service = AnalysisService(
         MarketDataService(MarketCacheRepository(app.state.database)), app.state.analysis_repository
     )
+    app.state.research_service = ResearchService(app.state.analysis_service.market_data)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173"],
@@ -47,6 +49,13 @@ def create_app(database_path: str | Path = "data/gushen.sqlite3") -> FastAPI:
         if result is None:
             raise HTTPException(status_code=404, detail="Analysis record not found")
         return result.model_dump(mode="json")
+
+    @app.post("/api/research/baseline")
+    def create_baseline_research(symbol: str) -> dict:
+        try:
+            return app.state.research_service.baseline_report(symbol)
+        except MarketDataError as error:
+            raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error)}) from error
 
     return app
 

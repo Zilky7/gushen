@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -29,3 +29,26 @@ def test_market_data_rejects_short_downloads(tmp_path) -> None:
 
     with pytest.raises(MarketDataError, match="insufficient_data"):
         service.get_daily_bars("MU", minimum_bars=2)
+
+
+def test_market_data_falls_back_to_cache_when_refresh_is_insufficient(tmp_path) -> None:
+    cache = MarketCacheRepository(Database(tmp_path / "cache.sqlite3"))
+    stale_service = MarketDataService(cache, freshness=timedelta(seconds=-1), downloader=lambda _: pd.DataFrame({"Open": [1], "High": [2], "Low": [1], "Close": [2], "Volume": [3]}, index=pd.DatetimeIndex(["2026-01-01"])))
+    cache.save("MU", stale_service.to_bars(pd.DataFrame({"Open": [1, 2], "High": [2, 3], "Low": [1, 2], "Close": [2, 3], "Volume": [3, 4]}, index=pd.DatetimeIndex(["2025-01-01", "2025-01-02"]))), stale_service.now())
+
+    result = stale_service.get_daily_bars("MU", minimum_bars=2)
+
+    assert result.stale_cache is True
+    assert len(result.bars) == 2
+
+
+def test_history_download_uses_explicit_research_dates(tmp_path) -> None:
+    calls = []
+    service = MarketDataService(
+        MarketCacheRepository(Database(tmp_path / "cache.sqlite3")),
+        history_downloader=lambda symbol, start, end: calls.append((symbol, start, end)) or pd.DataFrame({"Open": [1], "High": [2], "Low": [1], "Close": [2], "Volume": [3]}, index=pd.DatetimeIndex(["2025-01-01"])),
+    )
+
+    service.get_history_bars("mu", date(2023, 1, 1), date(2025, 12, 31), minimum_bars=1)
+
+    assert calls == [("MU", date(2023, 1, 1), date(2025, 12, 31))]

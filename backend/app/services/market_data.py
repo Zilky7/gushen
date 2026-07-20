@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Callable
 
 from app.domain.models import OhlcvBar
@@ -31,10 +31,12 @@ class MarketDataService:
         self,
         cache: MarketCacheRepository,
         downloader: Callable[[str], "pd.DataFrame"] | None = None,
+        history_downloader: Callable[[str, date, date], "pd.DataFrame"] | None = None,
         freshness: timedelta = timedelta(hours=24),
     ) -> None:
         self.cache = cache
         self.downloader = downloader or self._download
+        self.history_downloader = history_downloader or self._download_history
         self.freshness = freshness
 
     @staticmethod
@@ -53,6 +55,12 @@ class MarketDataService:
         import yfinance as yf
 
         return yf.download(symbol, period="2y", interval="1d", auto_adjust=False, progress=False)
+
+    @staticmethod
+    def _download_history(symbol: str, start: date, end: date) -> "pd.DataFrame":
+        import yfinance as yf
+
+        return yf.download(symbol, start=start.isoformat(), end=(end + timedelta(days=1)).isoformat(), interval="1d", auto_adjust=False, progress=False)
 
     @staticmethod
     def to_bars(frame: "pd.DataFrame") -> list[OhlcvBar]:
@@ -89,8 +97,26 @@ class MarketDataService:
             self.cache.save(ticker, bars, fetched_at)
             return MarketDataResult(ticker, bars, fetched_at, stale_cache=False)
         except MarketDataError:
+            if cached:
+                return MarketDataResult(ticker, cached[0], cached[1], stale_cache=True)
             raise
         except Exception as error:
             if cached:
                 return MarketDataResult(ticker, cached[0], cached[1], stale_cache=True)
             raise MarketDataError("fetch_failed", "Could not fetch daily market data.") from error
+
+    def get_history_bars(
+        self, symbol: str, start: date, end: date, minimum_bars: int = 210
+    ) -> list[OhlcvBar]:
+        if start > end:
+            raise MarketDataError("invalid_dates", "Start date must not be after end date.")
+        ticker = self.normalize_symbol(symbol)
+        try:
+            bars = self.to_bars(self.history_downloader(ticker, start, end))
+        except MarketDataError:
+            raise
+        except Exception as error:
+            raise MarketDataError("fetch_failed", "Could not fetch historical daily market data.") from error
+        if len(bars) < minimum_bars:
+            raise MarketDataError("insufficient_data", f"insufficient_data: only {len(bars)} daily bars are available.")
+        return bars
