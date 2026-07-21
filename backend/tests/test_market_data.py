@@ -52,3 +52,15 @@ def test_history_download_uses_explicit_research_dates(tmp_path) -> None:
     service.get_history_bars("mu", date(2023, 1, 1), date(2025, 12, 31), minimum_bars=1)
 
     assert calls == [("MU", date(2023, 1, 1), date(2025, 12, 31))]
+
+
+def test_empty_provider_response_is_reported_as_temporary_market_data_failure(tmp_path) -> None:
+    service = MarketDataService(
+        MarketCacheRepository(Database(tmp_path / "cache.sqlite3")),
+        downloader=lambda _: pd.DataFrame(),
+    )
+
+    with pytest.raises(MarketDataError) as error:
+        service.get_daily_bars("MU", minimum_bars=2)
+
+    assert error.value.code == "empty_data"

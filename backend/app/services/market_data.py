@@ -65,6 +65,12 @@ class MarketDataService:
     @staticmethod
     def to_bars(frame: "pd.DataFrame") -> list[OhlcvBar]:
         import pandas as pd
+
+        if frame.empty:
+            raise MarketDataError(
+                "empty_data",
+                "行情源暂时未返回数据（通常是 yfinance/Yahoo 限流）；请稍后重试。",
+            )
         if isinstance(frame.columns, pd.MultiIndex):
             frame = frame.copy()
             frame.columns = frame.columns.get_level_values(0)
