@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { CandlestickSeries, ColorType, createChart, HistogramSeries, LineSeries } from "lightweight-charts";
 import type { Analysis } from "../types";
+import { ChartSummary } from "./ChartSummary";
 
 export type ChartRange = 63 | 126 | 252 | "all";
 
@@ -34,5 +35,5 @@ export function PriceChart({ analysis, range }: { analysis: Analysis; range: Cha
     else chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, analysis.bars.length - range), to: analysis.bars.length - 1 });
     return () => chart.remove();
   }, [analysis, range]);
-  return <div className="chart" ref={target} aria-label="日线K线图" />;
+  return <section className="chart-shell"><ChartSummary bars={analysis.bars} indicators={analysis.indicators} /><div className="chart" ref={target} aria-label="日线K线图" /></section>;
 }
