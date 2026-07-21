@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { CandlestickSeries, ColorType, createChart, HistogramSeries, LineSeries } from "lightweight-charts";
 import type { Analysis } from "../types";
 
-export function PriceChart({ analysis }: { analysis: Analysis }) {
+export type ChartRange = 63 | 126 | 252 | "all";
+
+export function PriceChart({ analysis, range }: { analysis: Analysis; range: ChartRange }) {
   const target = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!target.current) return;
@@ -28,8 +30,9 @@ export function PriceChart({ analysis }: { analysis: Analysis }) {
       if (candidate.target_two) candles.createPriceLine({ price: candidate.target_two.center, color: "#39c6a3", lineWidth: 1, axisLabelVisible: true, title: "TP2" });
       if (candidate.invalidation) candles.createPriceLine({ price: candidate.invalidation, color: "#ef6262", lineWidth: 1, axisLabelVisible: true, title: "失效" });
     }
-    chart.timeScale().fitContent();
+    if (range === "all") chart.timeScale().fitContent();
+    else chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, analysis.bars.length - range), to: analysis.bars.length - 1 });
     return () => chart.remove();
-  }, [analysis]);
+  }, [analysis, range]);
   return <div className="chart" ref={target} aria-label="日线K线图" />;
 }
