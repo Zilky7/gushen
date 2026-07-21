@@ -31,11 +31,13 @@ class MarketDataService:
         self,
         cache: MarketCacheRepository,
         downloader: Callable[[str], "pd.DataFrame"] | None = None,
+        nasdaq_downloader: Callable[[str], "pd.DataFrame"] | None = None,
         history_downloader: Callable[[str, date, date], "pd.DataFrame"] | None = None,
         freshness: timedelta = timedelta(hours=24),
     ) -> None:
         self.cache = cache
         self.downloader = downloader or self._download
+        self.nasdaq_downloader = nasdaq_downloader or self._download_nasdaq
         self.history_downloader = history_downloader or self._download_history
         self.freshness = freshness
 
@@ -61,6 +63,28 @@ class MarketDataService:
         import yfinance as yf
 
         return yf.download(symbol, start=start.isoformat(), end=(end + timedelta(days=1)).isoformat(), interval="1d", auto_adjust=False, progress=False)
+
+    @staticmethod
+    def _download_nasdaq(symbol: str) -> "pd.DataFrame":
+        import pandas as pd
+        import requests
+
+        today = date.today()
+        start = today - timedelta(days=800)
+        response = requests.get(
+            f"https://api.nasdaq.com/api/quote/{symbol}/historical",
+            params={"assetclass": "stocks", "fromdate": start.isoformat(), "todate": today.isoformat(), "limit": 5000},
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}, timeout=20,
+        )
+        response.raise_for_status()
+        rows = response.json().get("data", {}).get("tradesTable", {}).get("rows", [])
+        frame = pd.DataFrame(rows)
+        if frame.empty:
+            return frame
+        frame["Date"] = pd.to_datetime(frame["date"])
+        for source, target in {"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"}.items():
+            frame[target] = frame[source].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False).astype(float)
+        return frame.set_index("Date")[["Open", "High", "Low", "Close", "Volume"]].sort_index()
 
     @staticmethod
     def to_bars(frame: "pd.DataFrame") -> list[OhlcvBar]:
@@ -92,7 +116,7 @@ class MarketDataService:
         ticker = self.normalize_symbol(symbol)
         cached = self.cache.get(ticker)
         if cached and self.now() - cached[1] <= self.freshness:
-            return MarketDataResult(ticker, cached[0], cached[1], stale_cache=False)
+            return MarketDataResult(ticker, cached[0], cached[1], stale_cache=False, source=cached[2])
         try:
             bars = self.to_bars(self.downloader(ticker))
             if len(bars) < minimum_bars:
@@ -100,15 +124,25 @@ class MarketDataService:
                     "insufficient_data", f"insufficient_data: only {len(bars)} daily bars are available."
                 )
             fetched_at = self.now()
-            self.cache.save(ticker, bars, fetched_at)
+            self.cache.save(ticker, bars, fetched_at, "yfinance")
             return MarketDataResult(ticker, bars, fetched_at, stale_cache=False)
-        except MarketDataError:
+        except MarketDataError as yahoo_error:
             if cached:
-                return MarketDataResult(ticker, cached[0], cached[1], stale_cache=True)
-            raise
+                return MarketDataResult(ticker, cached[0], cached[1], stale_cache=True, source=cached[2])
+            try:
+                bars = self.to_bars(self.nasdaq_downloader(ticker))
+                if len(bars) < minimum_bars:
+                    raise MarketDataError("insufficient_data", "Nasdaq fallback returned too little daily data.")
+                fetched_at = self.now()
+                self.cache.save(ticker, bars, fetched_at, "nasdaq")
+                return MarketDataResult(ticker, bars, fetched_at, stale_cache=False, source="nasdaq")
+            except MarketDataError:
+                raise yahoo_error
+            except Exception as error:
+                raise MarketDataError("fetch_failed", "Could not fetch daily market data from yfinance or Nasdaq.") from error
         except Exception as error:
             if cached:
-                return MarketDataResult(ticker, cached[0], cached[1], stale_cache=True)
+                return MarketDataResult(ticker, cached[0], cached[1], stale_cache=True, source=cached[2])
             raise MarketDataError("fetch_failed", "Could not fetch daily market data.") from error
 
     def get_history_bars(

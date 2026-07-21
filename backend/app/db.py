@@ -28,6 +28,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS market_cache (
                     symbol TEXT PRIMARY KEY,
                     fetched_at TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'yfinance',
                     payload TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS strategy_versions (
@@ -48,3 +49,6 @@ class Database:
                 );
                 """
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(market_cache)")}
+            if "source" not in columns:
+                connection.execute("ALTER TABLE market_cache ADD COLUMN source TEXT NOT NULL DEFAULT 'yfinance'")

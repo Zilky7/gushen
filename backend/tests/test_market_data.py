@@ -25,7 +25,7 @@ def test_market_data_uses_stale_cache_when_download_fails(tmp_path) -> None:
 
 def test_market_data_rejects_short_downloads(tmp_path) -> None:
     frame = pd.DataFrame({"Open": [1], "High": [2], "Low": [1], "Close": [2], "Volume": [3]}, index=pd.DatetimeIndex(["2026-01-01"]))
-    service = MarketDataService(MarketCacheRepository(Database(tmp_path / "cache.sqlite3")), downloader=lambda _: frame)
+    service = MarketDataService(MarketCacheRepository(Database(tmp_path / "cache.sqlite3")), downloader=lambda _: frame, nasdaq_downloader=lambda _: pd.DataFrame())
 
     with pytest.raises(MarketDataError, match="insufficient_data"):
         service.get_daily_bars("MU", minimum_bars=2)
@@ -58,9 +58,26 @@ def test_empty_provider_response_is_reported_as_temporary_market_data_failure(tm
     service = MarketDataService(
         MarketCacheRepository(Database(tmp_path / "cache.sqlite3")),
         downloader=lambda _: pd.DataFrame(),
+        nasdaq_downloader=lambda _: pd.DataFrame(),
     )
 
     with pytest.raises(MarketDataError) as error:
         service.get_daily_bars("MU", minimum_bars=2)
 
     assert error.value.code == "empty_data"
+
+
+def test_market_data_uses_nasdaq_fallback_when_yahoo_is_empty(tmp_path) -> None:
+    yahoo = lambda _: pd.DataFrame()
+    nasdaq = lambda _: pd.DataFrame(
+        {"Open": [1], "High": [2], "Low": [1], "Close": [2], "Volume": [3]},
+        index=pd.DatetimeIndex(["2026-01-01"]),
+    )
+    service = MarketDataService(
+        MarketCacheRepository(Database(tmp_path / "cache.sqlite3")), downloader=yahoo, nasdaq_downloader=nasdaq
+    )
+
+    result = service.get_daily_bars("MU", minimum_bars=1)
+
+    assert result.source == "nasdaq"
+    assert len(result.bars) == 1

@@ -35,19 +35,19 @@ class MarketCacheRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def save(self, symbol: str, bars: list[OhlcvBar], fetched_at: datetime) -> None:
+    def save(self, symbol: str, bars: list[OhlcvBar], fetched_at: datetime, source: str = "yfinance") -> None:
         payload = json.dumps([bar.model_dump(mode="json") for bar in bars])
         with self.database.connect() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO market_cache (symbol, fetched_at, payload) VALUES (?, ?, ?)",
-                (symbol, fetched_at.isoformat(), payload),
+                "INSERT OR REPLACE INTO market_cache (symbol, fetched_at, source, payload) VALUES (?, ?, ?, ?)",
+                (symbol, fetched_at.isoformat(), source, payload),
             )
 
-    def get(self, symbol: str) -> tuple[list[OhlcvBar], datetime] | None:
+    def get(self, symbol: str) -> tuple[list[OhlcvBar], datetime, str] | None:
         with self.database.connect() as connection:
             row = connection.execute(
-                "SELECT fetched_at, payload FROM market_cache WHERE symbol = ?", (symbol,)
+                "SELECT fetched_at, source, payload FROM market_cache WHERE symbol = ?", (symbol,)
             ).fetchone()
         if not row:
             return None
-        return ([OhlcvBar.model_validate(item) for item in json.loads(row["payload"])], datetime.fromisoformat(row["fetched_at"]))
+        return ([OhlcvBar.model_validate(item) for item in json.loads(row["payload"])], datetime.fromisoformat(row["fetched_at"]), row["source"])
