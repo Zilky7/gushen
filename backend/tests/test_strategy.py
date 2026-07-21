@@ -1,7 +1,7 @@
 import pandas as pd
 
 from app.domain.models import Direction, PriceZone
-from app.engine.strategy import generate_candidates
+from app.engine.strategy import detect_strong_trend_high_volatility, generate_candidates
 
 
 def test_long_breakout_has_atr_invalidation_and_fallback_targets() -> None:
@@ -43,3 +43,14 @@ def test_pullback_requires_a_bullish_reclaiming_close() -> None:
     candidates = generate_candidates(frame, zones)
 
     assert all(item.template != "long_pullback" for item in candidates)
+
+
+def test_detects_strong_trend_high_volatility_regime() -> None:
+    index = pd.date_range("2025-01-01", periods=210, freq="B")
+    close = [100 + step * 4 for step in range(210)]
+    frame = pd.DataFrame({"Open": [value - 5 for value in close], "High": [value + 35 for value in close], "Low": [value - 35 for value in close], "Close": close, "Volume": [1000] * 210}, index=index)
+
+    regime = detect_strong_trend_high_volatility(frame)
+
+    assert regime.active is True
+    assert regime.trigger_count >= 4

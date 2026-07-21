@@ -1,12 +1,40 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import pandas as pd
 
 from app.domain.models import Direction, OpportunityStatus, PriceRange, PriceZone, StrategyCandidate
 from app.engine.defaults import DEFAULT_PARAMETERS, StrategyParameters
 from app.engine.indicators import compute_indicators
+
+
+@dataclass(frozen=True)
+class Regime:
+    active: bool
+    trigger_count: int
+    triggers: list[str]
+
+
+def detect_strong_trend_high_volatility(
+    frame: pd.DataFrame, parameters: StrategyParameters = DEFAULT_PARAMETERS
+) -> Regime:
+    enriched = compute_indicators(frame, parameters)
+    if len(enriched) < max(parameters.sma_slow, 64):
+        return Regime(False, 0, [])
+    latest = enriched.iloc[-1]
+    if any(pd.isna(latest[item]) for item in ("atr_14", "sma_20", "sma_50", "sma_200", "sma_50_slope_10")):
+        return Regime(False, 0, [])
+    close, atr = float(latest.Close), float(latest.atr_14)
+    gain_3m = close / float(enriched.iloc[-64].Close) - 1
+    triggers = []
+    if close > latest.sma_20 > latest.sma_50 > latest.sma_200: triggers.append("moving-average alignment")
+    if latest.sma_50_slope_10 > 0 and close / latest.sma_200 - 1 >= 0.25: triggers.append("strong medium-term trend")
+    if gain_3m >= 0.35: triggers.append("three-month advance")
+    if atr / close >= 0.04: triggers.append("high ATR percentage")
+    if close - latest.sma_20 >= 2 * atr or close / latest.sma_50 - 1 >= 0.15: triggers.append("extended from moving average")
+    return Regime(len(triggers) >= 4, len(triggers), triggers)
 
 
 def _range(center: float, atr: float, source: str) -> PriceRange:
@@ -73,6 +101,7 @@ def generate_candidates(
     parameters: StrategyParameters = DEFAULT_PARAMETERS,
 ) -> list[StrategyCandidate]:
     enriched = compute_indicators(frame, parameters)
+    regime = detect_strong_trend_high_volatility(frame, parameters)
     latest = enriched.iloc[-1]
     required = ["atr_14", "sma_20", "sma_50", "sma_200", "sma_50_slope_10", "volume_sma_20"]
     if any(math.isnan(float(latest[name])) for name in required):
@@ -117,4 +146,10 @@ def generate_candidates(
         second_zone = _nearest(zones, "support", first, above=False)
         second = second_zone.upper if second_zone else entry - (invalidation - entry) * parameters.target_two_r
         candidates.append(_candidate("short_breakdown", Direction.SHORT, entry, invalidation, first, second, atr, short_trend, above_support.strength, volume_confirmed, ["downtrend", "close below support", "volume confirmation"], parameters))
-    return candidates
+    return [
+        candidate.model_copy(update={
+            "facts": {**candidate.facts, "strong_trend_high_volatility": regime.active, "regime_trigger_count": regime.trigger_count},
+            "conditions": [*candidate.conditions, *( ["strong-trend high-volatility mode"] if regime.active else [])],
+        })
+        for candidate in candidates
+    ]
