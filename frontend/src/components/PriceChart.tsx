@@ -9,7 +9,7 @@ export function PriceChart({ analysis, range }: { analysis: Analysis; range: Cha
   const target = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!target.current) return;
-    const chart = createChart(target.current, { autoSize: true, height: 470, layout: { background: { type: ColorType.Solid, color: "#101722" }, textColor: "#a8b3c7" }, grid: { vertLines: { color: "#1b2735" }, horzLines: { color: "#1b2735" } }, rightPriceScale: { borderColor: "#263445" }, timeScale: { borderColor: "#263445" } });
+    const chart = createChart(target.current, { height: 470, layout: { background: { type: ColorType.Solid, color: "#101722" }, textColor: "#a8b3c7" }, grid: { vertLines: { color: "#1b2735" }, horzLines: { color: "#1b2735" } }, rightPriceScale: { borderColor: "#263445" }, timeScale: { borderColor: "#263445" } });
     const candles = chart.addSeries(CandlestickSeries, { upColor: "#39c6a3", downColor: "#ef6262", borderVisible: false, wickUpColor: "#39c6a3", wickDownColor: "#ef6262" });
     candles.setData(analysis.bars.map(bar => ({ time: bar.date, open: bar.open, high: bar.high, low: bar.low, close: bar.close })));
     const volume = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "", color: "#39526f" });
